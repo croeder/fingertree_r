@@ -80,7 +80,7 @@ Reducer(f, i) %as% {
 # if we're reducing a Node2, we call the reducers' function in the correct grouping on the node's elements
 reduce_left(n, r) %::% Node2 : Reducer : .
 reduce_left(n, r) %as% {
-  r$f(r$f(r$i, n[[1]]), n[[2]])
+  r$f(r$f(r$i, n[[1]]), n[[2]]) # or: r$i %>% r$f(n[[1]]) %>% r$f(n[[2]])
 }
 
 
@@ -263,7 +263,7 @@ add_right(d, el) %as% {
 add_all_left(t, els) %::% FingerTree : . : FingerTree
 add_all_left(t, els) %as% {
   for(el in rev(els)) {
-    t <- add_left(t, Element(el))
+    t <- add_left(t, el)
   }
   return(t)
 }
@@ -271,7 +271,7 @@ add_all_left(t, els) %as% {
 add_all_right(t, els) %::% FingerTree : . : FingerTree
 add_all_right(t, els) %as% {
   for(el in els) {
-    t <- add_right(t, Element(el))
+    t <- add_right(t, el)
   }
   return(t)
 }
@@ -332,6 +332,7 @@ get_graph_df <- function(t) {
   NODE_STACK <- rstack()
   
   add_edges <- function(t) {
+
     if(t %isa% Empty) {
       parentid <- attr(t, "id")
       parenttype <- class(t)[1]
@@ -344,16 +345,36 @@ get_graph_df <- function(t) {
       parentlabel <- paste0(as.character(unlist(t)), collapse = ", ")
       NODE_STACK <<- insert_top(NODE_STACK, list(node = parentid, type = parenttype, label = parentlabel))
     } else {
-      for(subthing in t) {
-        parentid <- attr(t, "id")
-        childid <- attr(subthing, "id")
-        EDGE_STACK <<- insert_top(EDGE_STACK, list(parent = parentid, child = childid))
+      if(!is.null(names(t))) {
+        # rev() here and below determines the order of addition to the data and thus (apparently)
+        # the node ordering 
+        for(subthing_name in rev(names(t))) {
+          subthing <- t[[subthing_name]]
+          parentid <- attr(t, "id")
+          childid <- attr(subthing, "id")
+          EDGE_STACK <<- insert_top(EDGE_STACK, list(parent = parentid, child = childid, label = subthing_name))
+          
+          parenttype <- class(t)[1]
+          parentlabel <- ""
+          NODE_STACK <<- insert_top(NODE_STACK, list(node = parentid, type = parenttype, label = parentlabel))
+          
+          add_edges(subthing)
+        }
         
-        parenttype <- class(t)[1]
-        parentlabel <- ""
-        NODE_STACK <<- insert_top(NODE_STACK, list(node = parentid, type = parenttype, label = parentlabel))
-        
-        add_edges(subthing)
+      } else {
+        index <- 1
+        for(subthing in rev(t)) {
+          parentid <- attr(t, "id")
+          childid <- attr(subthing, "id")
+          EDGE_STACK <<- insert_top(EDGE_STACK, list(parent = parentid, child = childid, label = index))
+          
+          parenttype <- class(t)[1]
+          parentlabel <- ""
+          NODE_STACK <<- insert_top(NODE_STACK, list(node = parentid, type = parenttype, label = parentlabel))
+          
+          add_edges(subthing)
+          index <- index + 1
+        }
       }
     }
     return(invisible())
@@ -368,7 +389,7 @@ get_graph_df <- function(t) {
 }
 
 # plotting a tree with igraph, using the get_graph_df() helper
-plot_tree <- function(t1, vertex.size = 4, edge.width = 1) {
+plot_tree <- function(t1, vertex.size = 4, edge.width = 1, label_edges = FALSE, title = NULL) {
   t1_edge_df <- get_graph_df(t1)[[1]]
   t1_node_df <- get_graph_df(t1)[[2]]
   t1_node_df$color <- NA
@@ -379,7 +400,7 @@ plot_tree <- function(t1, vertex.size = 4, edge.width = 1) {
   t1_node_df$color[t1_node_df$type == "Single"] <- "#80b1d3"
   t1_node_df$color[t1_node_df$type == "Node3"] <- "#fdb462"
   t1_node_df$color[t1_node_df$type == "Node2"] <- "#b3de69"
-  
+
   g <- graph_from_data_frame(t1_edge_df, vertices = unique(t1_node_df), directed = TRUE)
   
   plot(g, 
@@ -391,19 +412,22 @@ plot_tree <- function(t1, vertex.size = 4, edge.width = 1) {
        edge.arrow.size = 0.4,
        asp = 0.4, 
        edge.arrow.mode = 0,
-       edge.width = edge.width)
+       edge.width = edge.width,
+       edge.label = ifelse(label_edges, t1_edge_df$label, ""),
+       main = title
+       )
 }
 
 
 
 # fill one and plot it!
-t1 <- Empty()
-for(i in seq(1, 45)) {
-  if(i %% 100 == 0) {print(i)} # print periodically
-  t1 <- add_left(t1, Element(i))
-}
-
-plot_tree(t1)
+# t1 <- Empty()
+# for(i in seq(1, 45)) {
+#   if(i %% 100 == 0) {print(i)} # print periodically
+#   t1 <- add_left(t1, Element(i))
+# }
+# 
+# plot_tree(t1)
 
 
 
@@ -443,16 +467,17 @@ app3(e, ts, xs) %as% add_all_left(xs, ts)
 app3(xs, ts, e) %::% FingerTree : list : Empty : FingerTree
 app3(xs, ts, e) %as% add_all_right(xs, ts)
 
-app3(s, ts, xs) %::% Single : list : FingerTree : FingerTree
-app3(s, ts, xs) %as% add_left(add_all_left(xs, ts), s[[1]])
+app3(x, ts, xs) %::% Single : list : FingerTree : FingerTree
+app3(x, ts, xs) %as% add_left(add_all_left(xs, ts), x)
 
-app3(xs, ts, s) %::% FingerTree : list : Single : FingerTree
-app3(xs, ts, s) %as% add_right(add_all_right(xs, ts), s[[1]])
+app3(xs, ts, x) %::% FingerTree : list : Single : FingerTree
+app3(xs, ts, x) %as% add_right(add_all_right(xs, ts), x)
 
 # the toughy is concatenating two deep trees, a recursive operation
 # still needs testing & further work
 app3(xs, ts, ys) %::% Deep : list : Deep : FingerTree
 app3(xs, ts, ys) %as% {
+  #str(c(xs$suffix, ts, ys$prefix))
   Deep(xs$prefix,
        app3(xs$middle, 
             nodes(c(xs$suffix, ts, ys$prefix)), 
@@ -460,19 +485,43 @@ app3(xs, ts, ys) %as% {
        ys$suffix)
 }
 
-
-
-
-## just for figure development
-t1 <- Empty()
-for(i in sample(toupper(letters[1:6]))) {
-  t1 <- add_left(t1, Element(i))
+concat(xs, ys) %::% FingerTree : FingerTree : FingerTree
+concat(xs, ys) %as% {
+  app3(xs, list(), ys)
 }
 
-plot_tree(t1, vertex.size = 8, edge.width = 1.5)
+
+as.FingerTree(l) %::% list : FingerTree
+as.FingerTree(l) %as% {
+  t <- Empty()
+  for(el in l) {t <- add_right(t, Element(el))}
+  return(t)
+}
 
 
 
+# ## just for figure development
+# t1 <- Empty()
+# for(i in sample(toupper(c(letters[1:12], "L")))) {
+#   t1 <- add_left(t1, Element(i))
+# }
+# 
+# # manually exchange a 3-node with a 2-node for illustration; 
+# # normally 2-nodes are only created during merge operations
+# t1$middle$prefix[[1]] <- Node2(Element("B"), Element("F"))
+# 
+# plot_tree(t1, vertex.size = 8, edge.width = 1.5)
+
+
+
+abcs <- as.FingerTree(as.list(letters[1:5]))
+xyzs <- as.FingerTree(as.list(letters[16:21]))
+
+plot_tree(abcs)
+plot_tree(xyzs)
+
+all <- concat(abcs, xyzs)
+plot_tree(all, vertex.size = 12, title = "all!")
 
 
 
