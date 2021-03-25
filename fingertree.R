@@ -1,11 +1,14 @@
 # This script explores 2-3 finger trees, using lambda.r
 # (exploring typed structures similar to examples of 2-3 finger in haskell)
 library(lambda.r)
+library(igraph)
+library(lambdass)  # shorter/nicer anonymous function syntax
 library(magrittr)
 library(rlist)
 library(rstackdeque)
 library(pryr)
-library(igraph)
+library(memoise)
+
 
 ##############################
 ## Node type definitions
@@ -76,34 +79,56 @@ Reducer(f, i) %as% {
   list(f = f, i = i)
 }
 
-# reducing leftward...
-# if we're reducing a Node2, we call the reducers' function in the correct grouping on the node's elements
-reduce_left(n, r) %::% Node2 : Reducer : .
+# # reducing leftward...
+# # if we're reducing a Node2, we call the reducers' function in the correct grouping on the node's elements
+# reduce_left(n, r) %::% Node2 : Reducer : .
+# reduce_left(n, r) %as% {
+#   cat("\n")
+#   str(n)
+#   r$f(r$f(r$i, n[[1]]), n[[2]]) # or: r$i %>% r$f(n[[1]]) %>% r$f(n[[2]])
+# }
+# 
+# 
+# # if we're reducing a Node3, we call the reducers' function in the correct grouping on the node's elements
+# reduce_left(n, r) %::% Node3 : Reducer : .
+# reduce_left(n, r) %as% {
+#   r$f(r$f(r$f(r$i, n[[1]]), n[[2]]), n[[3]])
+# }
+
+reduce_left(n, r) %::% Node : Reducer: .
 reduce_left(n, r) %as% {
-  r$f(r$f(r$i, n[[1]]), n[[2]]) # or: r$i %>% r$f(n[[1]]) %>% r$f(n[[2]])
+  curr <- r$i
+  for(el in n) {
+    el_reduced <- reduce_left(el, r)
+    curr <- r$f(curr, el_reduced)
+  }
+  return(curr)
 }
 
 
-# if we're reducing a Node3, we call the reducers' function in the correct grouping on the node's elements
-reduce_left(n, r) %::% Node3 : Reducer : .
-reduce_left(n, r) %as% {
-  r$f(r$f(r$f(r$i, n[[1]]), n[[2]]), n[[3]])
-}
+# # reducing rightward...
+# # if we're reducing a Node2, we call the reducers' function in the correct grouping on the node's elements
+# reduce_right(n, r) %::% Node2 : Reducer : .
+# reduce_right(n, r) %as% {
+#   r$f(n[[1]], r$f(n[[2]], r$i))
+# }
 
-
-# reducing rightward...
-# if we're reducing a Node2, we call the reducers' function in the correct grouping on the node's elements
-reduce_right(n, r) %::% Node2 : Reducer : .
+reduce_right(n, r) %::% Node : Reducer: .
 reduce_right(n, r) %as% {
-  r$f(n[[1]], r$f(n[[2]], r$i))
+  curr <- r$i
+  for(el in rev(n)) {
+    el_reduced <- reduce_right(el, r)
+    curr <- r$f(el_reduced, curr)
+  }
+  return(curr)
 }
 
 
-# if we're reducing a Node3, we call the reducers' function in the correct grouping on the node's elements
-reduce_right(n, r) %::% Node3 : Reducer : .
-reduce_right(n, r) %as% {
-  r$f(n[[1]], r$f(n[[2]], r$f(n[[3]], r$i)))
-}
+# # if we're reducing a Node3, we call the reducers' function in the correct grouping on the node's elements
+# reduce_right(n, r) %::% Node3 : Reducer : .
+# reduce_right(n, r) %as% {
+#   r$f(n[[1]], r$f(n[[2]], r$f(n[[3]], r$i)))
+# }
 
 # small test code
 # r1 <- Reducer(function(a, b) {b}, 0)
@@ -136,34 +161,53 @@ reduce_left(e, r) %::% Empty : Reducer : .   # if it's an empty tree...
 reduce_left(e, r) %as% r$i    # it's just the identity
 
 reduce_left(s, r) %::% Single : Reducer : .   # if it's a single element...
-reduce_left(s, r) %as% r$f(r$i, s[[1]])    # it's just the identity with that element, identity first for left
+reduce_left(s, r) %as% {
+  el_reduced <- reduce_left(s[[1]], r)
+  r$f(r$i, el_reduced)    # it's just the identity with that element, identity first for left
+  }
+
+reduce_left(e, r) %::% Element : Reducer : . # an element can be reduced too
+reduce_left(e, r) %as% r$f(r$i, e)
+
 
 reduce_right(e, r) %::% Empty : Reducer : .   # if it's an empty tree...
 reduce_right(e, r) %as% r$i    # it's just the identity
 
 reduce_right(s, r) %::% Single : Reducer : .   # if it's a single element...
-reduce_right(s, r) %as% r$f(r$i, s[[1]])    # it's just the identity with that element, identity first for left
+reduce_right(s, r) %as% {
+  el_reduced <- reduce_right(s[[1]], r)
+  r$f(r$i, el_reduced)    # it's just the identity with that element, identity first for left
+}
+
+reduce_right(e, r) %::% Element : Reducer : . # an element can be reduced too
+reduce_right(e, r) %as% r$f(r$i, e)
 
 
 
 
 # reduce_left for digits, which can have 1 to 4 elements; again we just call the reducer function with the right grouping
+# TODO: this is wrong for general finger trees, this assumes digits always contain data elements, which isn't true: they can contain 2-nodes
+# and threenodes as well
+# which means we need to distinguish the different cases
+# and we need to create reduce_left and reduce_right for nodes
 reduce_left(d, r) %::% Digit : Reducer : .
 reduce_left(d, r) %as% {
   curr <- r$i
   for(el in d) {
-    curr <- r$f(curr, el)
+    el_reduced <- reduce_left(el, r)
+    curr <- r$f(curr, el_reduced)
   }
   return(curr)
 }
+
 
 # reduce_right for digits, which can have 1 to 4 elements; again we just call the reducer function with the right grouping
 reduce_right(d, r) %::% Digit : Reducer : .
 reduce_right(d, r) %as% {
   curr <- r$i
-  for(index in rev(seq(1, length(d)))) {
-    el <- d[[index]]
-    curr <- r$f(el, curr)
+  for(el in rev(d)) {
+    el_reduced <- reduce_right(el, r)
+    curr <- r$f(el_reduced, curr)
   }
   return(curr)
 }
@@ -317,17 +361,34 @@ add_right(d, el) %as% {
 # in order to convert the tree to an igraph object, we need an obvious way to determine that
 # the node is an element (non-recursive case); this could also probably inherit from Node to grab it's random id
 Element(x) %::% . : .
-Element(x) %as% {
+Element(x, key = x) %as% {
   res <- x
+  res@key <- key
   attr(res, "id") <- paste(sample(letters, 4), collapse = "")
   return(res)
 }
 
-
+print.Element <- function(e) {
+   cat("Data Element: \n")
+   ecopy <- e
+   class(ecopy) <- class(e)[class(e) != "Element"]
+   attr(ecopy, "id") <- NULL
+   attr(ecopy, "key") <- NULL
+   print(ecopy)
+   if(!is.null(attr(e, "key"))) {
+     if(attr(e, "key") != e) {
+       cat("Key: ")
+       cat(attr(e, "key"))
+       cat("\n")
+     }
+   }
+   cat("\n")
+ }
 
 # a fancy recursive function that returns two data frames for building an igraph object out of;
 # takes a fingertree, returns a list of edge_dataframe and node_dataframe with edge and node information
 get_graph_df <- function(t) {
+  
   EDGE_STACK <- rstack()
   NODE_STACK <- rstack()
   
@@ -343,6 +404,12 @@ get_graph_df <- function(t) {
       parentid <- attr(t, "id")
       parenttype <- class(t)[1]
       parentlabel <- paste0(as.character(unlist(t)), collapse = ", ")
+      if(!is.null(attr(t, "key"))) {
+        if(any(attr(t, "key") != t)) {
+          parentlabelKey <- paste0(as.character(unlist(attr(t, "key"))), collapse = ", ")
+          parentlabel <- paste0(parentlabelKey, "\n", parentlabel)
+        }
+      }
       NODE_STACK <<- insert_top(NODE_STACK, list(node = parentid, type = parenttype, label = parentlabel))
     } else {
       if(!is.null(names(t))) {
@@ -403,6 +470,7 @@ plot_tree <- function(t1, vertex.size = 4, edge.width = 1, label_edges = FALSE, 
 
   g <- graph_from_data_frame(t1_edge_df, vertices = unique(t1_node_df), directed = TRUE)
   
+  par(lheight = 0.3)
   plot(g, 
        layout = layout_as_tree(g), 
        #layout = layout.reingold.tilford, 
@@ -414,7 +482,8 @@ plot_tree <- function(t1, vertex.size = 4, edge.width = 1, label_edges = FALSE, 
        edge.arrow.mode = 0,
        edge.width = edge.width,
        edge.label = ifelse(label_edges, t1_edge_df$label, ""),
-       main = title
+       main = title,
+       vertex.label.family = "Arial"
        )
 }
 
@@ -477,7 +546,6 @@ app3(xs, ts, x) %as% add_right(add_all_right(xs, ts), x)
 # still needs testing & further work
 app3(xs, ts, ys) %::% Deep : list : Deep : FingerTree
 app3(xs, ts, ys) %as% {
-  #str(c(xs$suffix, ts, ys$prefix))
   Deep(xs$prefix,
        app3(xs$middle, 
             nodes(c(xs$suffix, ts, ys$prefix)), 
@@ -490,14 +558,29 @@ concat(xs, ys) %as% {
   app3(xs, list(), ys)
 }
 
-
-as.FingerTree(l) %::% list : FingerTree
+as.FingerTree(l) %::% . : FingerTree
 as.FingerTree(l) %as% {
+  l <- as.list(l)
   t <- Empty()
   for(el in l) {t <- add_right(t, Element(el))}
   return(t)
 }
 
+as.FingerTree(l, v) %::% . : . : FingerTree
+as.FingerTree(l, v) %as% {
+  l <- as.list(l)
+  v <- as.list(v)
+  if(length(l) != length(v)) {
+    stop("length of entries and keys lists given to as.FingerTree not equal.")
+  }
+  t <- Empty()
+  for(i in 1:length(l)) {
+    el <- l[[i]]
+    key <- v[[i]]
+    t <- add_right(t, Element(el, key = key))
+  }
+  return(t)
+}
 
 
 # ## just for figure development
@@ -514,16 +597,87 @@ as.FingerTree(l) %as% {
 
 
 
-abcs <- as.FingerTree(as.list(letters[1:5]))
-xyzs <- as.FingerTree(as.list(letters[16:21]))
+abcs <- as.FingerTree(as.list(letters[1:12]))
+xyzs <- as.FingerTree(as.list(letters[16:26]))
 
-plot_tree(abcs)
-plot_tree(xyzs)
+#plot_tree(abcs)
+#plot_tree(xyzs)
 
 all <- concat(abcs, xyzs)
-plot_tree(all, vertex.size = 12, title = "all!")
+plot_tree(all, vertex.size = 9, title = "all!")
+
+
+
+indices <- sample(1:26)
+mix26 <- as.FingerTree(letters, indices)
+plot_tree(mix26, vertex.size = 9, title = "keyed")
+
+
+catter <- Reducer({a; b} %->% {
+  Element(paste0(a, b))
+  }, Element(""))
+print(reduce_right(mix26, catter))
+
+
+
+keyMinner <- Reducer({a; b} %->% {
+  if(attr(a, "key") < attr(b, "key")) {a} else {b}
+}, Element(Inf))
+test <- reduce_left(mix26, keyMinner)
+print(test)
+
+
+
+keySummer <- Reducer({a; b} %->% {
+  Element(paste0(a, b), key = attr(a, "key") + attr(b, "key"))
+}, Element("", key = 0) )
+reduce_left(as.FingerTree(letters, rep(1, 26)), keySummer)
+
+
+# minner <- Reducer({a; b} %->% {
+#   cat("\n")
+#   str(b)
+#   if(a > b) {a} else {b}
+# }, Inf)
+# test <- reduce_left(mix26, minner)
+# cat("-----")
+# str(test)
+
+
+
+# 
+# collector <- Reducer(c, Element(list()))
+# consonants <- Reducer(function(a, b) {
+#                         vowels <- c("a", "e", "i", "o", "u")
+#                         c(a[!a %in% vowels], b[!b %in% vowels])
+#                       }, 
+#                       Element(c()))
+# 
+# #plot_tree(mix26)
+# print(reduce_left(mix26, consonants) %>% unlist()) 
 
 
 
 
 
+
+#### this doesn't work... 
+
+# fs <- as.FingerTree(list(
+#   Element(abs),
+#   Element(log),
+#   Element(sqrt)
+# ))
+# 
+# applyer <- Reducer(function(f1, f2) {
+#   function(...) {
+#       f1(f2(...))
+#     }
+#   }, 
+# I)
+# f_all <- reduce_left(fs, applyer)
+# 
+# x <- c(3, -5, 2, -4, 1)
+# abs(log(sqrt(x)))
+# sqrt(log(abs(x)))
+# f_all(x)
