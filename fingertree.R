@@ -19,7 +19,8 @@ library(memoise)
 Node(...) %::% ... : list
 Node(...) %as% { 
   res <- list(...)
-  attr(res, "id") <- paste(sample(letters, 4), collapse = "")
+  res@id <- paste(sample(letters, 4), collapse = "")
+  res@cache <- new.env(parent = emptyenv())
   return(res)
 }
 
@@ -53,6 +54,7 @@ Digit(...) %::% ... : list
 Digit(...) %as% {
   res <- list(...)
   attr(res, "id") <- paste(sample(letters, 4), collapse = "")
+  res@cache <- new.env(parent = emptyenv())
   return(res)
 }
 
@@ -60,7 +62,9 @@ Digit(...) %as% {
 # and a suffix (digit)
 Deep(prefix, middle, suffix) %::% Digit : FingerTree : Digit : FingerTree
 Deep(prefix, middle, suffix) %as% {
-  FingerTree(prefix = prefix, middle = middle, suffix = suffix)   
+  res<- FingerTree(prefix = prefix, middle = middle, suffix = suffix)   
+  res@cache <- new.env(parent = emptyenv())
+  res
 }
 
 
@@ -95,13 +99,19 @@ Reducer(f, i) %as% {
 #   r$f(r$f(r$f(r$i, n[[1]]), n[[2]]), n[[3]])
 # }
 
+# TODO: the cache doesn't seem to be working according to these timing tests,
+# but I'm not sure why
 reduce_left(n, r) %::% Node : Reducer: .
 reduce_left(n, r) %as% {
+  cache_value <- paste0(as.character(r), collapse = "")
+  if(!is.null(n@cache[[cache_value]])) { return(n@cache[[cache_value]]) }
   curr <- r$i
   for(el in n) {
     el_reduced <- reduce_left(el, r)
     curr <- r$f(curr, el_reduced)
   }
+
+  n@cache[[cache_value]] <- curr
   return(curr)
 }
 
@@ -115,11 +125,15 @@ reduce_left(n, r) %as% {
 
 reduce_right(n, r) %::% Node : Reducer: .
 reduce_right(n, r) %as% {
+  cache_value <- paste0(as.character(r), collapse = "")
+  if(!is.null(n@cache[[cache_value]])) { return(n@cache[[cache_value]]) }
   curr <- r$i
   for(el in rev(n)) {
     el_reduced <- reduce_right(el, r)
     curr <- r$f(el_reduced, curr)
   }
+
+  n@cache[[cache_value]] <- curr
   return(curr)
 }
 
@@ -192,11 +206,16 @@ reduce_right(e, r) %as% r$f(r$i, e)
 # and we need to create reduce_left and reduce_right for nodes
 reduce_left(d, r) %::% Digit : Reducer : .
 reduce_left(d, r) %as% {
+  cache_value <- paste0(as.character(r), collapse = "")
+  if(!is.null(d@cache[[cache_value]])) { return(d@cache[[cache_value]]) }
+  
   curr <- r$i
   for(el in d) {
     el_reduced <- reduce_left(el, r)
     curr <- r$f(curr, el_reduced)
   }
+
+  d@cache[[cache_value]] <- curr
   return(curr)
 }
 
@@ -204,11 +223,16 @@ reduce_left(d, r) %as% {
 # reduce_right for digits, which can have 1 to 4 elements; again we just call the reducer function with the right grouping
 reduce_right(d, r) %::% Digit : Reducer : .
 reduce_right(d, r) %as% {
+  cache_value <- paste0(as.character(r), collapse = "")
+  if(!is.null(d@cache[[cache_value]])) { return(d@cache[[cache_value]]) }
+  
   curr <- r$i
   for(el in rev(d)) {
     el_reduced <- reduce_right(el, r)
     curr <- r$f(el_reduced, curr)
   }
+
+  d@cache[[cache_value]] <- curr
   return(curr)
 }
 
@@ -217,20 +241,31 @@ reduce_right(d, r) %as% {
 # reducing that)
 reduce_left(t, r) %::% Deep : Reducer : .
 reduce_left(t, r) %as% {
+  cache_value <- paste0(as.character(r), collapse = "")
+  if(!is.null(t@cache[[cache_value]])) { return(t@cache[[cache_value]]) }
   prefix_reduced <- reduce_left(t$prefix, r)
   middle_reduced <- reduce_left(t$middle, r)
   suffix_reduced <- reduce_left(t$suffix, r)
-  return(reduce_left(Digit(prefix_reduced, middle_reduced, suffix_reduced), r))
+  answer <- reduce_left(Digit(prefix_reduced, middle_reduced, suffix_reduced), r)
+
+  t@cache[[cache_value]] <- answer
+  return(answer)
 }
 
 # reduce_right for deep nodes: recursively reduce, then reduce the reductions (I'm cheating by putting them into a digit and then 
 # reducing that)
 reduce_right(t, r) %::% Deep : Reducer : .
 reduce_right(t, r) %as% {
+  cache_value <- paste0(as.character(r), collapse = "")
+  if(!is.null(t@cache[[cache_value]])) { return(t@cache[[cache_value]]) }
+  
   prefix_reduced <- reduce_right(t$prefix, r)
   middle_reduced <- reduce_right(t$middle, r)
   suffix_reduced <- reduce_right(t$suffix, r)
-  return(reduce_right(Digit(prefix_reduced, middle_reduced, suffix_reduced), r))
+
+  answer <- reduce_right(Digit(prefix_reduced, middle_reduced, suffix_reduced), r)
+  t@cache[[cache_value]] <- answer
+  return(answer)
 }
 
 
@@ -361,9 +396,9 @@ add_right(d, el) %as% {
 # in order to convert the tree to an igraph object, we need an obvious way to determine that
 # the node is an element (non-recursive case); this could also probably inherit from Node to grab it's random id
 Element(x) %::% . : .
-Element(x, key = x) %as% {
+Element(x, value = x) %as% {
   res <- x
-  res@key <- key
+  res@value <- value
   attr(res, "id") <- paste(sample(letters, 4), collapse = "")
   return(res)
 }
@@ -373,12 +408,12 @@ print.Element <- function(e) {
    ecopy <- e
    class(ecopy) <- class(e)[class(e) != "Element"]
    attr(ecopy, "id") <- NULL
-   attr(ecopy, "key") <- NULL
+   attr(ecopy, "value") <- NULL
    print(ecopy)
-   if(!is.null(attr(e, "key"))) {
-     if(attr(e, "key") != e) {
-       cat("Key: ")
-       cat(attr(e, "key"))
+   if(!is.null(attr(e, "value"))) {
+     if(attr(e, "value") != e) {
+       cat("Value: ")
+       cat(attr(e, "value"))
        cat("\n")
      }
    }
@@ -404,10 +439,10 @@ get_graph_df <- function(t) {
       parentid <- attr(t, "id")
       parenttype <- class(t)[1]
       parentlabel <- paste0(as.character(unlist(t)), collapse = ", ")
-      if(!is.null(attr(t, "key"))) {
-        if(any(attr(t, "key") != t)) {
-          parentlabelKey <- paste0(as.character(unlist(attr(t, "key"))), collapse = ", ")
-          parentlabel <- paste0(parentlabelKey, "\n", parentlabel)
+      if(!is.null(attr(t, "value"))) {
+        if(any(attr(t, "value") != t)) {
+          parentlabelValue <- paste0(as.character(unlist(attr(t, "value"))), collapse = ", ")
+          parentlabel <- paste0(parentlabelValue, "\n", parentlabel)
         }
       }
       NODE_STACK <<- insert_top(NODE_STACK, list(node = parentid, type = parenttype, label = parentlabel))
@@ -571,13 +606,13 @@ as.FingerTree(l, v) %as% {
   l <- as.list(l)
   v <- as.list(v)
   if(length(l) != length(v)) {
-    stop("length of entries and keys lists given to as.FingerTree not equal.")
+    stop("length of entries and values lists given to as.FingerTree not equal.")
   }
   t <- Empty()
   for(i in 1:length(l)) {
     el <- l[[i]]
-    key <- v[[i]]
-    t <- add_right(t, Element(el, key = key))
+    value <- v[[i]]
+    t <- add_right(t, Element(el, value = value))
   }
   return(t)
 }
@@ -610,7 +645,7 @@ plot_tree(all, vertex.size = 9, title = "all!")
 
 indices <- sample(1:26)
 mix26 <- as.FingerTree(letters, indices)
-plot_tree(mix26, vertex.size = 9, title = "keyed")
+plot_tree(mix26, vertex.size = 9, title = "valueed")
 
 
 catter <- Reducer({a; b} %->% {
@@ -620,18 +655,21 @@ print(reduce_right(mix26, catter))
 
 
 
-keyMinner <- Reducer({a; b} %->% {
-  if(attr(a, "key") < attr(b, "key")) {a} else {b}
+valueMinner <- Reducer({a; b} %->% {
+  if(attr(a, "value") < attr(b, "value")) {a} else {b}
 }, Element(Inf))
-test <- reduce_left(mix26, keyMinner)
+test <- reduce_left(mix26, valueMinner)
 print(test)
 
 
 
-keySummer <- Reducer({a; b} %->% {
-  Element(paste0(a, b), key = attr(a, "key") + attr(b, "key"))
-}, Element("", key = 0) )
-reduce_left(as.FingerTree(letters, rep(1, 26)), keySummer)
+valueSummer <- Reducer({a; b} %->% {
+  Element(paste0(a, b), value = attr(a, "value") + attr(b, "value"))
+}, Element("", value = 0) )
+test <- as.FingerTree(1:10)
+um <- reduce_left(test, valueSummer)
+#str(test)
+um2 <- reduce_left(test, valueSummer)
 
 
 # minner <- Reducer({a; b} %->% {
@@ -655,10 +693,6 @@ reduce_left(as.FingerTree(letters, rep(1, 26)), keySummer)
 # 
 # #plot_tree(mix26)
 # print(reduce_left(mix26, consonants) %>% unlist()) 
-
-
-
-
 
 
 #### this doesn't work... 
